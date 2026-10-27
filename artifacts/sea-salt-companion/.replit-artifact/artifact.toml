@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Sea Salt Companion"
+description = "PWA française mobile-first pour compter les scores de Sea Salt & Paper, jouer des parties complètes, consulter l’aide des cartes et gérer les extensions hors ligne avec stockage local."
+version = "1.0.0"
+id = "artifacts/sea-salt-companion"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19144
+
+[services.development]
+run = "pnpm --filter @workspace/sea-salt-companion run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/sea-salt-companion", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/sea-salt-companion/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19144"
+BASE_PATH = "/"

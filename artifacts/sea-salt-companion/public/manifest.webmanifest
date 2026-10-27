@@ -1,0 +1,20 @@
+{
+  "name": "Sea Salt Companion",
+  "short_name": "Sea Salt",
+  "description": "Compagnon hors ligne pour vos parties de Sea Salt & Paper.",
+  "lang": "fr-FR",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5f4ed",
+  "theme_color": "#0c3440",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
