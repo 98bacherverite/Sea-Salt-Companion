@@ -1,0 +1,1 @@
+- [Extensions en cours de partie](mid-game-extensions.md) — l’utilisateur veut pouvoir activer une extension pendant une partie ; prévoir une prise d’effet à la manche suivante.
