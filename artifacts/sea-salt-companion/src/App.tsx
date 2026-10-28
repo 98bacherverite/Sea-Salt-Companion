@@ -5,6 +5,8 @@ import {
   History, Minus, Plus, Search, Shell, Sparkles, Users, X,
 } from 'lucide-react';
 import { CARD_CATALOG, PEPPER_EVENTS } from '@/domain/catalog';
+import { calculatePotentialScore } from '@/domain/scoring';
+import type { ScoreResult } from '@/domain/types';
 
 type ExtensionId = 'extraSalt' | 'extraPepper';
 type Zone = 'hand' | 'played';
@@ -20,6 +22,9 @@ export interface Round {
   scores: Record<string, number>;
   entries: Record<string, CardCount[]>;
   colorCounts?: Record<string, Record<string, number>>;
+  seahorseAssignments?: Record<string, Partial<Record<'shell' | 'octopus' | 'penguin' | 'cabin-boy', number>>>;
+  starfishTrioCounts?: Record<string, number>;
+  faceDownShellCounts?: Record<string, number>;
   activeExtensions?: ExtensionId[];
   pepperEventId?: string | null;
 }
@@ -42,8 +47,6 @@ export interface EndRoundPreview {
   warnings?: string[];
   canConfirm?: boolean;
   details?: Record<string, string[]>;
-  canConfirm?: boolean;
-  details?: Record<string, string[]>;
 }
 export interface SeaSaltCompanionAdapter {
   games?: Game[];
@@ -52,6 +55,16 @@ export interface SeaSaltCompanionAdapter {
   onResumeGame?: (gameId: string) => void;
   onUpdateEntries?: (gameId: string, roundId: string, playerId: string, entries: CardCount[]) => void;
   onUpdateColorCounts?: (gameId: string, roundId: string, playerId: string, counts: Record<string, number>) => void;
+  onUpdateSaltOptions?: (
+    gameId: string,
+    roundId: string,
+    playerId: string,
+    options: {
+      seahorseAssignments: Partial<Record<'shell' | 'octopus' | 'penguin' | 'cabin-boy', number>>;
+      starfishTrioCount: number;
+      faceDownShellCount: number;
+    },
+  ) => void;
   onSetPepperEvent?: (gameId: string, roundId: string, eventId: string | null) => void;
   onRequestEndRound?: (gameId: string, roundId: string, endType: EndType, enderPlayerId?: string) => void;
   onConfirmEndRound?: (gameId: string, roundId: string, endType: EndType, enderPlayerId?: string) => void;
@@ -159,6 +172,8 @@ function App({ adapter }: { adapter?: SeaSaltCompanionAdapter } = {}) {
   const [quickCounts, setQuickCounts] = useState<Record<string, number>>({});
   const [selectedEnderId, setSelectedEnderId] = useState('');
   const [colorTextDraft, setColorTextDraft] = useState<Record<string, string>>({});
+  const [invalidColorDraft, setInvalidColorDraft] = useState<Record<string, boolean>>({});
+  const [quickColorText, setQuickColorText] = useState('');
   const [ruleSearch, setRuleSearch] = useState('');
   const [ruleFilter, setRuleFilter] = useState('Tout');
   const [notice, setNotice] = useState('');
@@ -174,6 +189,18 @@ function App({ adapter }: { adapter?: SeaSaltCompanionAdapter } = {}) {
       || activeGame?.extensions.includes(definition.extension);
   });
   const endPreview = adapter?.endPreview;
+  const quickColorCounts = parseColorCounts(quickColorText);
+  const quickEntries = Object.entries(quickCounts)
+    .filter(([, quantity]) => quantity > 0)
+    .map(([cardId, quantity]) => ({ cardId, quantity, zone: 'hand' as const }));
+  const quickScore: ScoreResult = calculatePotentialScore(
+    {
+      playerId: 'quick-count',
+      cards: quickEntries,
+      colorCounts: quickColorCounts ?? undefined,
+    },
+    { playerCount: 2, extensions: [], pepperEventId: null },
+  );
   const hasMatchingPreview = Boolean(activeGame && activeRound && endPreview
     && endPreview.gameId === activeGame.id
     && endPreview.roundId === activeRound.id
@@ -296,7 +323,7 @@ function App({ adapter }: { adapter?: SeaSaltCompanionAdapter } = {}) {
             <button className="nav-link" type="button" data-testid="button-navigation-history" onClick={() => setPanel('history')}><History size={15} /> Historique</button>
             <button className="nav-link" type="button" data-testid="button-navigation-count" onClick={() => setPanel('quickCount')}><Sparkles size={15} /> Comptage rapide</button>
           </nav>
-          <span className="status-line" data-testid="status-offline-ready"><span className="status-dot" /> Données locales</span>
+          <span className="status-line" aria-label="Parties enregistrées sur cet appareil" data-testid="status-offline-ready"><span className="status-dot" /> Local</span>
         </div>
       </header>
 
@@ -363,11 +390,14 @@ function App({ adapter }: { adapter?: SeaSaltCompanionAdapter } = {}) {
                 {activeGame.players.map((player) => {
                   const score = activeRound.scores[player.id];
                   const cumulative = activeGame.totalScores?.[player.id] ?? 0;
+                  const sirenWinThreshold = activeRound.pepperEventId === 'mermaid-dance' ? 3 : 4;
+                  const immediateSirenWin = getCount(player.id, 'siren', 'played') >= sirenWinThreshold;
                   return <article className="player-card" key={player.id} data-testid={`card-player-${player.id}`}>
                     <div className="player-card-top">
-                      <div><div className="player-name" data-testid={`text-player-name-${player.id}`}>{player.name}</div><div className="player-total" data-testid={`text-player-score-${player.id}`}>{cumulative}</div><div className="score-caption">score cumulé</div><div className="score-caption">Manche : {typeof score === 'number' ? `${score} pts potentiels` : 'calcul à vérifier'}</div>{typeof score === 'number' && score >= (activeRound.pepperEventId === 'treasure-chest' ? 10 : 7) && <span className="rule-check" role="status">Seuil de fin de manche atteint</span>}</div>
+                      <div><div className="player-name" data-testid={`text-player-name-${player.id}`}>{player.name}</div><div className="player-total" data-testid={`text-player-score-${player.id}`}>{cumulative}</div><div className="score-caption">score cumulé</div><div className="score-caption">Manche : {invalidColorDraft[player.id] ? 'saisie à corriger' : typeof score === 'number' ? `${score} pts potentiels` : 'calcul à vérifier'}</div>{typeof score === 'number' && score >= (activeRound.pepperEventId === 'treasure-chest' ? 10 : 7) && <span className="rule-check" role="status">Seuil de fin de manche atteint</span>}</div>
                       <span className="pill">Joueur {activeGame.players.indexOf(player) + 1}</span>
                     </div>
+                    {immediateSirenWin && <div className="pending-note" role="alert" data-testid={`status-immediate-win-${player.id}`}><Sparkles size={17} /> Victoire immédiate par les sirènes posées : vérifiez la saisie avant de confirmer.</div>}
                     <div className="player-card-body">
                       {activeCardTypes.map((card) => <div className="card-counter" key={card.id}>
                         <div className="card-name">{card.name}</div>
@@ -391,6 +421,7 @@ function App({ adapter }: { adapter?: SeaSaltCompanionAdapter } = {}) {
                   const value = event.target.value;
                   setColorTextDraft((draft) => ({ ...draft, [player.id]: value }));
                   const parsed = parseColorCounts(value);
+                          setInvalidColorDraft((draft) => ({ ...draft, [player.id]: parsed === null }));
                   if (parsed && activeGame && activeRound) {
                     adapter?.onUpdateColorCounts?.(activeGame.id, activeRound.id, player.id, parsed);
                   }
@@ -399,7 +430,52 @@ function App({ adapter }: { adapter?: SeaSaltCompanionAdapter } = {}) {
                 aria-label={`Nombre de cartes par couleur pour ${player.name}`}
                 data-testid={`input-color-counts-${player.id}`}
               />
+              {invalidColorDraft[player.id] && <span className="validation-message" role="alert">Format attendu : bleu: 3, jaune: 2.</span>}
             </label>
+            {activeRound.activeExtensions?.includes('extraSalt') && <details className="salt-options">
+              <summary>Options de score Extra Salt</summary>
+              {(() => {
+                const assignments = activeRound.seahorseAssignments?.[player.id] ?? {};
+                const trioCount = activeRound.starfishTrioCounts?.[player.id] ?? 0;
+                const faceDownCount = activeRound.faceDownShellCounts?.[player.id] ?? 0;
+                const update = (patch: Partial<{
+                  seahorseAssignments: Partial<Record<'shell' | 'octopus' | 'penguin' | 'cabin-boy', number>>;
+                  starfishTrioCount: number;
+                  faceDownShellCount: number;
+                }>) => adapter?.onUpdateSaltOptions?.(activeGame.id, activeRound.id, player.id, {
+                  seahorseAssignments: patch.seahorseAssignments ?? assignments,
+                  starfishTrioCount: patch.starfishTrioCount ?? trioCount,
+                  faceDownShellCount: patch.faceDownShellCount ?? faceDownCount,
+                });
+                const assignmentsLabels = [
+                  ['shell', 'Coquillages'],
+                  ['octopus', 'Poulpes'],
+                  ['penguin', 'Manchots'],
+                  ['cabin-boy', 'Moussaillons'],
+                ] as const;
+                return <>
+                  <p className="helper-text">Attribuez chaque hippocampe à une collection admissible. Vérifiez les conditions sur la carte.</p>
+                  {assignmentsLabels.map(([key, label]) => <div className="salt-option-row" key={key}>
+                    <span>{label}</span>
+                    <button className="count-button" type="button" aria-label={`Retirer un hippocampe des ${label.toLowerCase()} de ${player.name}`} onClick={() => update({ seahorseAssignments: { ...assignments, [key]: Math.max(0, (assignments[key] ?? 0) - 1) } })}><Minus size={15} /></button>
+                    <strong>{assignments[key] ?? 0}</strong>
+                    <button className="count-button" type="button" aria-label={`Affecter un hippocampe aux ${label.toLowerCase()} de ${player.name}`} onClick={() => update({ seahorseAssignments: { ...assignments, [key]: (assignments[key] ?? 0) + 1 } })}><Plus size={15} /></button>
+                  </div>)}
+                  <div className="salt-option-row">
+                    <span>Trio étoile + duo</span>
+                    <button className="count-button" type="button" aria-label={`Retirer un trio étoile de ${player.name}`} onClick={() => update({ starfishTrioCount: Math.max(0, trioCount - 1) })}><Minus size={15} /></button>
+                    <strong>{trioCount}</strong>
+                    <button className="count-button" type="button" aria-label={`Ajouter un trio étoile à ${player.name}`} onClick={() => update({ starfishTrioCount: trioCount + 1 })}><Plus size={15} /></button>
+                  </div>
+                  <div className="salt-option-row">
+                    <span>Coquillages face cachée</span>
+                    <button className="count-button" type="button" aria-label={`Retirer un coquillage protégé de ${player.name}`} onClick={() => update({ faceDownShellCount: Math.max(0, faceDownCount - 1) })}><Minus size={15} /></button>
+                    <strong>{faceDownCount}</strong>
+                    <button className="count-button" type="button" aria-label={`Ajouter un coquillage protégé à ${player.name}`} onClick={() => update({ faceDownShellCount: faceDownCount + 1 })}><Plus size={15} /></button>
+                  </div>
+                </>;
+              })()}
+            </details>}
                   </article>;
                 })}
               </div>
@@ -538,8 +614,18 @@ function App({ adapter }: { adapter?: SeaSaltCompanionAdapter } = {}) {
             <button className="count-button" type="button" aria-label={`Ajouter une carte ${card.name}`} data-testid={`button-quick-increment-${card.id}`} onClick={() => setQuickCounts((counts) => ({ ...counts, [card.id]: (counts[card.id] ?? 0) + 1 }))}><Plus size={15} /></button>
           </div>)}
         </div>
+        <label className="color-count-entry">
+          <span className="field-label">Couleurs des cartes · requis si vous comptez des sirènes</span>
+          <input className="text-input" value={quickColorText} onChange={(event) => setQuickColorText(event.target.value)} placeholder="Ex. bleu: 3, jaune: 2" aria-label="Couleurs pour le comptage rapide" aria-invalid={quickColorText.trim() !== '' && quickColorCounts === null} data-testid="input-quick-color-counts" />
+        </label>
+        {quickColorText.trim() !== '' && quickColorCounts === null && <p className="validation-message" role="alert">Format attendu : bleu: 3, jaune: 2.</p>}
+        <section className="quick-score-summary" aria-live="polite" data-testid="quick-score-summary">
+          <div className="player-card-top"><strong>Score estimé · jeu de base</strong><span className="player-total">{quickScore.total ?? 'À vérifier'}</span></div>
+          {quickScore.lines.map((line) => <div className="score-line" key={line.id}><span><strong>{line.label} · {line.quantity}</strong><small>{line.explanation}</small></span><strong>{line.points === null ? 'À vérifier' : `${line.points} pt${line.points === 1 ? '' : 's'}`}</strong></div>)}
+          {quickScore.warnings.map((warning, index) => <p className="pending-note" key={`${index}-${warning}`}><CircleHelp size={16} /> {warning}</p>)}
+        </section>
         <div className="dialog-actions">
-          <button className="button button-quiet" type="button" data-testid="button-reset-quick-count" onClick={() => setQuickCounts({})}>Tout remettre à zéro</button>
+          <button className="button button-quiet" type="button" data-testid="button-reset-quick-count" onClick={() => { setQuickCounts({}); setQuickColorText(''); }}>Tout remettre à zéro</button>
           <button className="button button-secondary" type="button" data-testid="button-close-quick-count" onClick={() => setPanel(null)}>Terminer</button>
         </div>
       </Modal>}

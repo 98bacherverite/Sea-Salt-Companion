@@ -1,4 +1,4 @@
-import { GAME_THRESHOLDS, PEPPER_EVENTS } from "./catalog";
+import { GAME_THRESHOLDS, PEPPER_EVENTS } from "./catalog.ts";
 import type {
   EndType,
   ExtensionId,
@@ -6,7 +6,7 @@ import type {
   ScoreLine,
   ScoreResult,
   SimulationResult,
-} from "./types";
+} from "./types.ts";
 
 export interface ScoringRules {
   playerCount: 2 | 3 | 4;
@@ -203,10 +203,15 @@ function scorePlayer(
   const tornado = pepperEventIsActive("tornado", rules, input.playerId);
   const rodeo = pepperEventIsActive("aquatic-rodeo", rules, input.playerId);
 
-  const rawShells = Math.max(
-    0,
-    (totals.all.shell ?? 0) - (input.faceDownShellCount ?? 0),
-  );
+  const faceDownShellCount = input.faceDownShellCount ?? 0;
+  if (
+    !Number.isInteger(faceDownShellCount) ||
+    faceDownShellCount < 0 ||
+    faceDownShellCount > (salt ? totals.all.shell ?? 0 : 0)
+  ) {
+    warnings.push("Le nombre de coquillages face cachée ne correspond pas aux cartes saisies.");
+  }
+  const rawShells = Math.max(0, (totals.all.shell ?? 0) - faceDownShellCount);
   const octopuses = totals.all.octopus ?? 0;
   const penguins = totals.all.penguin ?? 0;
   const cabinBoys = totals.all["cabin-boy"] ?? 0;
@@ -287,7 +292,7 @@ function scorePlayer(
     kraken ? PEPPER_SOURCE : VERIFIED_BASE_SOURCE,
   );
 
-  const penguinPoints = collectionPoints("penguin", penguins);
+  const penguinPoints = collectionPoints("penguin", adjustedPenguins);
   addLine(
     lines,
     "penguin",
@@ -297,7 +302,7 @@ function scorePlayer(
     "Barème de collection du livret de base.",
   );
 
-  const cabinBoyPoints = collectionPoints("cabin-boy", cabinBoys);
+  const cabinBoyPoints = collectionPoints("cabin-boy", adjustedCabinBoys);
   addLine(
     lines,
     "cabin-boy",
@@ -355,7 +360,19 @@ function scorePlayer(
       "1 point par crabe ; le panier ne compte pas comme un crabe.",
       "Livret officiel Extra Salt, studiobombyx.com/assets/EXTRA_SALT_regles_FR.pdf.",
     );
-    const starfishPoints = (input.starfishTrioCount ?? 0) * 2;
+    const starfishTrioCount = input.starfishTrioCount ?? 0;
+    const playedPairCount = pairScore(totals.played, salt, rodeo);
+    if (
+      !Number.isInteger(starfishTrioCount) ||
+      starfishTrioCount < 0 ||
+      starfishTrioCount >
+        Math.min(totals.played.starfish ?? 0, playedPairCount)
+    ) {
+      warnings.push(
+        "Chaque trio étoile + duo doit utiliser des cartes posées et saisies.",
+      );
+    }
+    const starfishPoints = starfishTrioCount * 2;
     addLine(
       lines,
       "starfish",
@@ -494,6 +511,29 @@ export function simulateRoundEnd(
   ) {
     warnings.push("Le Diodon interdit Stop à ce joueur cette manche.");
     canConfirm = false;
+  }
+  if (rules.roundEnderPlayerId) {
+    const enderResult = scoreResults[rules.roundEnderPlayerId];
+    const enderRules = {
+      ...rules,
+      ownedPepperEventId:
+        rules.ownedPepperEvents?.[rules.roundEnderPlayerId] ??
+        rules.ownedPepperEventId,
+    };
+    const callThreshold = getRoundEndThreshold(
+      enderRules,
+      rules.roundEnderPlayerId,
+    );
+    if (
+      enderResult?.cardPoints !== null &&
+      enderResult?.cardPoints !== undefined &&
+      enderResult.cardPoints < callThreshold
+    ) {
+      warnings.push(
+        `${endType === "stop" ? "Stop" : "Dernière Chance"} exige au moins ${callThreshold} points potentiels.`,
+      );
+      canConfirm = false;
+    }
   }
 
   if (canConfirm && endType === "stop") {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import App, { type Game as UiGame, type SeaSaltCompanionAdapter } from "./App";
 import { PEPPER_EVENTS } from "@/domain/catalog";
 import {
@@ -55,6 +55,7 @@ function getRoundInputs(round: Round, players: Player[]): PlayerScoreInput[] {
     playerId: player.id,
     cards: round.entries[player.id] ?? [],
     colorCounts: round.colorCounts?.[player.id],
+    seahorseAssignments: round.seahorseAssignments?.[player.id],
     starfishTrioCount: round.starfishTrioCounts?.[player.id] ?? 0,
     faceDownShellCount: round.faceDownShellCounts?.[player.id] ?? 0,
   }));
@@ -95,6 +96,7 @@ function withPotentialScores(game: Game, round: Round): Round {
         playerId: player.id,
         cards: round.entries[player.id] ?? [],
         colorCounts: round.colorCounts?.[player.id],
+        seahorseAssignments: round.seahorseAssignments?.[player.id],
         starfishTrioCount: round.starfishTrioCounts?.[player.id] ?? 0,
         faceDownShellCount: round.faceDownShellCounts?.[player.id] ?? 0,
       },
@@ -107,6 +109,8 @@ function withPotentialScores(game: Game, round: Round): Round {
 
 export default function AppContainer() {
   const [state, setState] = useState<AppState | null>(null);
+  const stateRef = useRef<AppState | null>(null);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [storageError, setStorageError] = useState<string | null>(null);
   const [endPreview, setEndPreview] = useState<SeaSaltCompanionAdapter["endPreview"]>();
 
@@ -124,10 +128,14 @@ export default function AppContainer() {
     let active = true;
     void loadAppState()
       .then((stored) => {
-        if (active) setState(stored);
+        if (active) {
+          stateRef.current = stored;
+          setState(stored);
+        }
       })
       .catch((error: unknown) => {
         if (active) {
+          stateRef.current = structuredClone(EMPTY_STATE);
           setStorageError(
             error instanceof Error
               ? error.message
@@ -142,28 +150,32 @@ export default function AppContainer() {
   }, []);
 
   const commit = (next: AppState) => {
+    stateRef.current = next;
     setState(next);
     setStorageError(null);
-    void saveAppState(next).catch((error: unknown) => {
-      setStorageError(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’enregistrer les données locales.",
-      );
-    });
+    saveQueueRef.current = saveQueueRef.current
+      .then(() => saveAppState(next))
+      .catch((error: unknown) => {
+        setStorageError(
+          error instanceof Error
+            ? error.message
+            : "Impossible d’enregistrer les données locales.",
+        );
+      });
   };
 
   const updateGame = (
     gameId: string,
     update: (game: Game) => Game,
   ): Game | undefined => {
-    if (!state) return undefined;
-    const current = state.games.find((game) => game.id === gameId);
+    const latestState = stateRef.current;
+    if (!latestState) return undefined;
+    const current = latestState.games.find((game) => game.id === gameId);
     if (!current) return undefined;
     const updated = { ...update(current), updatedAt: new Date().toISOString() };
     commit({
-      ...state,
-      games: state.games.map((game) => (game.id === gameId ? updated : game)),
+      ...latestState,
+      games: latestState.games.map((game) => (game.id === gameId ? updated : game)),
     });
     return updated;
   };
@@ -178,13 +190,25 @@ export default function AppContainer() {
       endPreview,
       onCreateGame: (uiGame) => {
         const now = new Date().toISOString();
+        const usedProfileIds = new Set<string>();
         const players = uiGame.players.map((incoming) => {
           const matching = state.players.find(
-            (known) => normalizedName(known.name) === normalizedName(incoming.name),
+            (known) =>
+              !usedProfileIds.has(known.id) &&
+              normalizedName(known.name) === normalizedName(incoming.name),
           );
-          return matching
-            ? { ...matching, name: incoming.name.trim() || matching.name }
-            : { ...incoming, name: incoming.name.trim() || "Joueur", createdAt: now };
+          if (matching) {
+            usedProfileIds.add(matching.id);
+            return { ...matching, name: incoming.name.trim() || matching.name };
+          }
+          const created = {
+            ...incoming,
+            id: newId(),
+            name: incoming.name.trim() || "Joueur",
+            createdAt: now,
+          };
+          usedProfileIds.add(created.id);
+          return created;
         });
         const game: Game = {
           ...(uiGame as Game),
@@ -261,6 +285,30 @@ export default function AppContainer() {
           }),
         }));
       },
+      onUpdateSaltOptions: (gameId, roundId, playerId, options) => {
+        updateGame(gameId, (game) => ({
+          ...game,
+          rounds: game.rounds.map((round) =>
+            round.id === roundId
+              ? withPotentialScores(game, {
+                  ...round,
+                  seahorseAssignments: {
+                    ...round.seahorseAssignments,
+                    [playerId]: options.seahorseAssignments,
+                  },
+                  starfishTrioCounts: {
+                    ...round.starfishTrioCounts,
+                    [playerId]: options.starfishTrioCount,
+                  },
+                  faceDownShellCounts: {
+                    ...round.faceDownShellCounts,
+                    [playerId]: options.faceDownShellCount,
+                  },
+                })
+              : round,
+          ),
+        }));
+      },
       onSetPepperEvent: (gameId, roundId, eventId) => {
         updateGame(gameId, (game) => ({
           ...game,
@@ -287,7 +335,7 @@ export default function AppContainer() {
             playerId,
             result.lines.map(
               (line) =>
-                `${line.label}: ${line.points === null ? "à vérifier" : `${line.points} pt${line.points > 1 ? "s" : ""}`}`,
+                `${line.label} · ${line.quantity} · ${line.explanation} = ${line.points === null ? "à vérifier" : `${line.points} pt${line.points > 1 ? "s" : ""}`}`,
             ),
           ]),
         );
@@ -436,5 +484,8 @@ export default function AppContainer() {
     );
   }
 
-  return <App adapter={adapter} />;
+  return <>
+    {storageError && <div className="pending-note storage-warning" role="alert">{storageError} Les parties restent ouvertes, mais ne seront pas enregistrées tant que le stockage local ne fonctionne pas.</div>}
+    <App adapter={adapter} />
+  </>;
 }

@@ -6,7 +6,17 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.addAll([APP_SHELL, `${APP_SHELL}manifest.webmanifest`]))
+      .then(async (cache) => {
+        const shell = await fetch(APP_SHELL);
+        if (!shell.ok) throw new Error("Application shell could not be cached");
+        await cache.put(APP_SHELL, shell.clone());
+        const html = await shell.text();
+        const assets = Array.from(
+          html.matchAll(/(?:src|href)=["']([^"']*\/assets\/[^"']+)["']/g),
+          (match) => new URL(match[1], APP_SHELL).toString(),
+        );
+        await cache.addAll([`${APP_SHELL}manifest.webmanifest`, ...assets]);
+      })
       .then(() => self.skipWaiting()),
   );
 });

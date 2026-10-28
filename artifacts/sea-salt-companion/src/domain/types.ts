@@ -58,6 +58,10 @@ export interface Round {
   scores: Record<string, number>;
   entries: Record<string, CardCount[]>;
   colorCounts?: Record<string, Record<string, number>>;
+  seahorseAssignments?: Record<
+    string,
+    Partial<Record<"shell" | "octopus" | "penguin" | "cabin-boy", number>>
+  >;
   starfishTrioCounts?: Record<string, number>;
   faceDownShellCounts?: Record<string, number>;
   activeExtensions?: ExtensionId[];
